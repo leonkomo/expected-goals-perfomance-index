@@ -1,0 +1,171 @@
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# --- Global Poisson mean (overall avg goals per game) ---
+OVERALL_MEAN_GOALS <- 3.24
+
+# --- Simulation function using overall mean as lambda ---
+simulate_match <- function(home_xg, away_xg, lambda = OVERALL_MEAN_GOALS,
+                           n_sim = 1000000, seed = 123) {
+  set.seed(seed)
+  
+  home_xg <- as.numeric(home_xg)
+  away_xg <- as.numeric(away_xg)
+  
+  if (is.na(home_xg) || is.na(away_xg) || home_xg <= 0 || away_xg <= 0) {
+    return(c(HomeWin = NA, Draw = NA, AwayWin = NA,
+             mean_home_goals = NA, mean_away_goals = NA))
+  }
+  
+  total_xg    <- home_xg + away_xg
+  home_lambda <- (home_xg / total_xg) * lambda
+  away_lambda <- (away_xg / total_xg) * lambda
+  
+  home_goals <- rpois(n_sim, lambda = home_lambda)
+  away_goals <- rpois(n_sim, lambda = away_lambda)
+  
+  c(
+    HomeWin         = mean(home_goals > away_goals),
+    Draw            = mean(home_goals == away_goals),
+    AwayWin         = mean(home_goals < away_goals),
+    mean_home_goals = mean(home_goals),
+    mean_away_goals = mean(away_goals)
+  )
+}
+
+# --- Rename score columns to avoid conflict with simulated goals ---
+results <- Bundesliga_Fixtures_XG %>%
+  rename(
+    actual_home_goals = home_goals,
+    actual_away_goals = away_goals
+  ) %>%
+  mutate(
+    home_xg = as.numeric(home_xg),
+    away_xg = as.numeric(away_xg)
+  ) %>%
+  rowwise() %>%
+  mutate(
+    probs           = list(simulate_match(home_xg, away_xg)),
+    p_home_win      = probs[["HomeWin"]],
+    p_draw          = probs[["Draw"]],
+    p_away_win      = probs[["AwayWin"]],
+    mean_home_goals = probs[["mean_home_goals"]],
+    mean_away_goals = probs[["mean_away_goals"]]
+  ) %>%
+  select(-probs) %>%
+  ungroup()
+
+# --- Determine actual outcome and probability ---
+results_scored <- results %>%
+  mutate(
+    actual_outcome = case_when(
+      actual_home_goals > actual_away_goals  ~ "HomeWin",
+      actual_home_goals == actual_away_goals ~ "Draw",
+      actual_home_goals < actual_away_goals  ~ "AwayWin"
+    ),
+    actual_probability = case_when(
+      actual_outcome == "HomeWin" ~ p_home_win,
+      actual_outcome == "Draw"    ~ p_draw,
+      actual_outcome == "AwayWin" ~ p_away_win
+    )
+  )
+
+# --- Preview match-level results ---
+results_scored %>%
+  select(home_team, away_team, home_xg, away_xg,
+         mean_home_goals, mean_away_goals,
+         p_home_win, p_draw, p_away_win,
+         actual_home_goals, actual_away_goals,
+         actual_outcome, actual_probability) %>%
+  print(n = Inf)
+
+# --- Sum probabilities per team ---
+team_scores <- bind_rows(
+  results_scored %>%
+    select(team = home_team, actual_outcome, actual_probability),
+  results_scored %>%
+    select(team = away_team, actual_outcome, actual_probability)
+) %>%
+  group_by(team) %>%
+  summarise(
+    total_xg_points = sum(actual_probability, na.rm = TRUE),
+    matches_played  = n(),
+    avg_xg_points   = total_xg_points / matches_played
+  ) %>%
+  arrange(desc(total_xg_points))
+
+print(team_scores, n = Inf)
+
+# --- Eintracht Frankfurt: cumulative xG points over the season ---
+CLUB <- "Eintracht Frankfurt"
+
+frankfurt_data <- bind_rows(
+  results_scored %>%
+    filter(home_team == CLUB) %>%
+    select(match_day, opponent = away_team, venue = home_team,
+           actual_outcome, actual_probability),
+  results_scored %>%
+    filter(away_team == CLUB) %>%
+    select(match_day, opponent = home_team, venue = away_team,
+           actual_outcome, actual_probability)
+) %>%
+  mutate(home_away = if_else(venue == CLUB, "Home", "Away")) %>%
+  arrange(match_day) %>%
+  mutate(
+    match_number      = row_number(),
+    cumulative_xg_pts = cumsum(replace_na(actual_probability, 0))
+  )
+
+# --- Outcome colour mapping ---
+outcome_colors <- c(
+  "HomeWin" = "#2E75B6",
+  "Draw"    = "#FFC000",
+  "AwayWin" = "#C00000"
+)
+
+outcome_labels <- c(
+  "HomeWin" = "Win",
+  "Draw"    = "Draw",
+  "AwayWin" = "Loss"
+)
+
+ggplot(frankfurt_data, aes(x = match_number, y = cumulative_xg_pts)) +
+  
+  geom_area(fill = "#2E75B6", alpha = 0.10) +
+  geom_line(color = "#1F3864", linewidth = 1.0) +
+  geom_point(aes(color = actual_outcome),
+             size = 3.5, stroke = 1.2) +
+  
+  scale_color_manual(
+    values = outcome_colors,
+    labels = outcome_labels,
+    name   = "Result"
+  ) +
+  scale_x_continuous(
+    breaks = frankfurt_data$match_number,
+    labels = paste0(frankfurt_data$match_day,": ", frankfurt_data$opponent),
+    expand = c(0.02, 0.02)
+  ) +
+scale_y_continuous(
+    breaks = seq(0, 15, by = 1),
+    expand = expansion(mult = c(0.02, 0.12))
+  ) +
+  
+  labs(
+    title    = paste(CLUB, "- Cumulative Expected Goals (xG) Odds"),
+    x        = "Match Day",
+    y        = "Expected Goals (xG) Odds",
+  ) +
+  
+  theme_minimal(base_family = "sans") +
+  theme(
+    plot.title         = element_text(face = "bold", size = 14),
+    axis.text.x        = element_text(angle = 45, hjust = 1, size = 8),
+    axis.text.y        = element_text(size = 12),
+    axis.title         = element_text(face="bold", size = 12),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dotted", color = "grey85"),
+    legend.position    = "bottom",
+    legend.box         = "horizontal"
+  )
