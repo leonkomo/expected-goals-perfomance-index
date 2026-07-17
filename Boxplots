@@ -1,0 +1,64 @@
+library(ggplot2)
+library(patchwork)
+
+teams <- c("Bayern", "Dortmund", "RBL", "Heidenheim", "St.Pauli", "Freiburg",
+           "Stuttgart", "Bremen", "Wolfsburg", "Hoffenheim", "Leverkusen",
+           "Augsburg", "Köln", "HSV", "Gladbach", "Eintracht Frankfurt", "Mainz", "Union")
+
+total_vals <- c(18.7, 17.2, 16.9, 16.4, 16.0, 15.9, 15.7, 15.5, 15.3, 14.6,
+                14.5, 14.4, 14.2, 14.1, 14.0, 13.9, 12.7, 12.4)
+
+mean_vals <- c(0.5500, 0.5059, 0.4971, 0.4824, 0.4706, 0.4676, 0.4618, 0.4559,
+               0.4500, 0.4294, 0.4265, 0.4235, 0.4176, 0.4147, 0.4118, 0.4088,
+               0.3735, 0.3647)
+
+df <- data.frame(team = teams,
+                 total = total_vals,
+                 mean_odds = mean_vals,
+                 highlight = ifelse(teams == "Eintracht Frankfurt", "Frankfurt", "Team"))
+
+# Plot 1: Total xG Odds
+p1 <- ggplot(df, aes(x = "", y = total)) +
+  geom_boxplot(width = 0.4, fill = "#e6f1fb", color = "#2a78d6", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.4, fatten = 2,
+               color = "black", linewidth = 0.5) +
+  geom_jitter(data = subset(df, highlight == "Team"),
+              aes(color = highlight), width = 0.08, size = 3, alpha = 0.6) +
+  geom_point(data = subset(df, highlight == "Frankfurt"),
+             color = "#e34948", size = 5, shape = 18) +
+  geom_text(data = subset(df, highlight == "Frankfurt"),
+            aes(label = team), hjust = -0.15, vjust = 0.4, color = "#e34948",
+            size = 4, fontface = "bold") +
+  scale_color_manual(values = c("Team" = "#898781")) +
+  coord_cartesian(clip = "off") +
+  labs(title = "Total xG Odds", x = NULL, y = "Total xG Odds") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.margin = margin(t = 10, r = 100, b = 10, l = 10))
+
+# Plot 2: Mean xG Odds
+p2 <- ggplot(df, aes(x = "", y = mean_odds)) +
+  geom_boxplot(width = 0.4, fill = "#e6f1fb", color = "#2a78d6", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "crossbar", width = 0.4, fatten = 2,
+               color = "black", linewidth = 0.5) +
+  geom_jitter(data = subset(df, highlight == "Team"),
+              aes(color = highlight), width = 0.08, size = 3, alpha = 0.6) +
+  geom_point(data = subset(df, highlight == "Frankfurt"),
+             color = "#e34948", size = 5, shape = 18) +
+  geom_text(data = subset(df, highlight == "Frankfurt"),
+            aes(label = team), hjust = -0.15, vjust = 0.4, color = "#e34948",
+            size = 4, fontface = "bold") +
+  scale_color_manual(values = c("Team" = "#898781")) +
+  coord_cartesian(clip = "off") +
+  labs(title = "Mean xG Odds", x = NULL, y = "Mean xG Odds") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.margin = margin(t = 10, r = 100, b = 10, l = 10))
+
+p1 + p2
