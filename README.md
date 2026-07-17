@@ -1,1 +1,1 @@
-This project uses only R Code and focusses on the 2025/2026 Bundesliga Season of Eintracht Frankfurt
+This project is written entirely in R and focuses on Eintracht Frankfurt's 2025/2026 Bundesliga season
