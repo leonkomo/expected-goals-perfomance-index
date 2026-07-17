@@ -1,0 +1,153 @@
+library(dplyr)
+library(tidyr)
+
+# --- Global Poisson mean (overall avg goals per game) ---
+OVERALL_MEAN_GOALS <- 3.24
+
+# --- Club to analyse ---
+CLUB <- "Eintracht Frankfurt"
+
+# --- Matchday range filter ---
+MATCHDAY_FROM <- 21
+MATCHDAY_TO   <- 34
+
+# --- Simulation function using overall mean as lambda ---
+simulate_match <- function(home_xg, away_xg, lambda = OVERALL_MEAN_GOALS,
+                           n_sim = 1000000, seed = 123) {
+  set.seed(seed)
+  
+  home_xg <- as.numeric(home_xg)
+  away_xg <- as.numeric(away_xg)
+  
+  if (is.na(home_xg) || is.na(away_xg) || home_xg <= 0 || away_xg <= 0) {
+    return(c(HomeWin = NA, Draw = NA, AwayWin = NA,
+             mean_home_goals = NA, mean_away_goals = NA))
+  }
+  
+  total_xg    <- home_xg + away_xg
+  home_lambda <- (home_xg / total_xg) * lambda
+  away_lambda <- (away_xg / total_xg) * lambda
+  
+  home_goals <- rpois(n_sim, lambda = home_lambda)
+  away_goals <- rpois(n_sim, lambda = away_lambda)
+  
+  c(
+    HomeWin         = mean(home_goals > away_goals),
+    Draw            = mean(home_goals == away_goals),
+    AwayWin         = mean(home_goals < away_goals),
+    mean_home_goals = mean(home_goals),
+    mean_away_goals = mean(away_goals)
+  )
+}
+
+# --- Filter to matchday range ---
+results <- Bundesliga_Fixtures_XG %>%
+  filter(match_day >= MATCHDAY_FROM & match_day <= MATCHDAY_TO) %>%
+  rename(
+    actual_home_goals = home_goals,
+    actual_away_goals = away_goals
+  ) %>%
+  mutate(
+    home_xg = as.numeric(home_xg),
+    away_xg = as.numeric(away_xg)
+  ) %>%
+  rowwise() %>%
+  mutate(
+    probs           = list(simulate_match(home_xg, away_xg)),
+    p_home_win      = probs[["HomeWin"]],
+    p_draw          = probs[["Draw"]],
+    p_away_win      = probs[["AwayWin"]],
+    mean_home_goals = probs[["mean_home_goals"]],
+    mean_away_goals = probs[["mean_away_goals"]]
+  ) %>%
+  select(-probs) %>%
+  ungroup()
+
+# --- Determine actual outcome and probability ---
+results_scored <- results %>%
+  mutate(
+    actual_outcome = case_when(
+      actual_home_goals > actual_away_goals  ~ "HomeWin",
+      actual_home_goals == actual_away_goals ~ "Draw",
+      actual_home_goals < actual_away_goals  ~ "AwayWin"
+    ),
+    actual_probability = case_when(
+      actual_outcome == "HomeWin" ~ p_home_win,
+      actual_outcome == "Draw"    ~ p_draw,
+      actual_outcome == "AwayWin" ~ p_away_win
+    )
+  )
+
+# --- Preview match-level results ---
+results_scored %>%
+  select(home_team, away_team, home_xg, away_xg,
+         mean_home_goals, mean_away_goals,
+         p_home_win, p_draw, p_away_win,
+         actual_home_goals, actual_away_goals,
+         actual_outcome, actual_probability) %>%
+  print(n = Inf)
+
+# --- Sum probabilities per team ---
+team_scores <- bind_rows(
+  results_scored %>%
+    select(team = home_team, actual_outcome, actual_probability),
+  results_scored %>%
+    select(team = away_team, actual_outcome, actual_probability)
+) %>%
+  group_by(team) %>%
+  summarise(
+    total_xg_points = sum(actual_probability, na.rm = TRUE),
+    matches_played  = n(),
+    avg_xg_points   = total_xg_points / matches_played
+  ) %>%
+  arrange(desc(total_xg_points))
+
+print(team_scores, n = Inf)
+
+# --- Eintracht Frankfurt: expected points per match ---
+frankfurt_home <- results_scored %>%
+  ungroup() %>%
+  filter(home_team == CLUB) %>%
+  mutate(
+    frankfurt_outcome = case_when(
+      actual_outcome == "HomeWin" ~ "Win",
+      actual_outcome == "Draw"    ~ "Draw",
+      TRUE                        ~ "Loss"
+    ),
+    opponent = away_team,
+    p_win    = p_home_win,
+    p_loss   = p_away_win
+  ) %>%
+  select(match_day, opponent, p_win, p_draw, p_loss,
+         actual_home_goals, actual_away_goals, frankfurt_outcome)
+
+frankfurt_away <- results_scored %>%
+  ungroup() %>%
+  filter(away_team == CLUB) %>%
+  mutate(
+    frankfurt_outcome = case_when(
+      actual_outcome == "AwayWin" ~ "Win",
+      actual_outcome == "Draw"    ~ "Draw",
+      TRUE                        ~ "Loss"
+    ),
+    opponent = home_team,
+    p_win    = p_away_win,
+    p_loss   = p_home_win
+  ) %>%
+  select(match_day, opponent, p_win, p_draw, p_loss,
+         actual_home_goals, actual_away_goals, frankfurt_outcome)
+
+frankfurt_data <- bind_rows(frankfurt_home, frankfurt_away) %>%
+  arrange(match_day) %>%
+  mutate(
+    match_number  = row_number(),
+    xp_per_match  = p_win * 3 + p_draw * 1 + p_loss * 0,
+    cumulative_xp = cumsum(xp_per_match)
+  )
+
+frankfurt_data %>%
+  select(match_day, opponent, frankfurt_outcome,
+         p_win, p_draw, p_loss, xp_per_match, cumulative_xp) %>%
+  mutate(across(c(p_win, p_draw, p_loss, xp_per_match, cumulative_xp),
+                ~ round(.x, 3))) %>%
+  print(n = Inf)
